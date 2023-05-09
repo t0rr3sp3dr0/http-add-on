@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	httpv1alpha1 "github.com/kedacore/http-add-on/operator/apis/http/v1alpha1"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -59,11 +60,11 @@ func TestIntegrationHappyPath(t *testing.T) {
 
 	originPort, err := strconv.Atoi(h.originURL.Port())
 	r.NoError(err)
-	r.NoError(h.routingTable.AddTarget(hostForTest(t), targetFromURL(
+	h.routingTable.(*testRoutingTable).memory[hostForTest(t)] = targetFromURL(
 		h.originURL,
 		originPort,
 		deplName,
-	)))
+	)
 
 	// happy path
 	res, err := doRequest(
@@ -124,11 +125,11 @@ func TestIntegrationNoReplicas(t *testing.T) {
 
 	originPort, err := strconv.Atoi(h.originURL.Port())
 	r.NoError(err)
-	r.NoError(h.routingTable.AddTarget(hostForTest(t), targetFromURL(
+	h.routingTable.(*testRoutingTable).memory[hostForTest(t)] = targetFromURL(
 		h.originURL,
 		originPort,
 		deployName,
-	)))
+	)
 
 	// 0 replicas
 	h.deplCache.Set(ns, deployName, appsv1.Deployment{
@@ -170,14 +171,11 @@ func TestIntegrationWaitReplicas(t *testing.T) {
 	// add host to routing table
 	originPort, err := strconv.Atoi(h.originURL.Port())
 	r.NoError(err)
-	r.NoError(h.routingTable.AddTarget(
-		hostForTest(t),
-		targetFromURL(
-			h.originURL,
-			originPort,
-			deployName,
-		),
-	))
+	h.routingTable.(*testRoutingTable).memory[hostForTest(t)] = targetFromURL(
+		h.originURL,
+		originPort,
+		deployName,
+	)
 
 	// set up a deployment with zero replicas and create
 	// a watcher we can use later to fake-send a deployment
@@ -265,7 +263,7 @@ type harness struct {
 	originHdl    http.Handler
 	originSrv    *httptest.Server
 	originURL    *url.URL
-	routingTable *routing.Table
+	routingTable routing.Table
 	dialCtxFunc  kedanet.DialContextFunc
 	deplCache    *k8s.FakeDeploymentCache
 	waitFunc     forwardWaitFunc
@@ -277,7 +275,7 @@ func newHarness(
 ) (*harness, error) {
 	t.Helper()
 	lggr := logr.Discard()
-	routingTable := routing.NewTable()
+	routingTable := newTestRoutingTable()
 	dialContextFunc := kedanet.DialContextWithRetry(
 		&net.Dialer{
 			Timeout: 2 * time.Second,
@@ -311,9 +309,6 @@ func newHarness(
 		routingTable,
 		dialContextFunc,
 		waitFunc,
-		func(routing.Target) (*url.URL, error) {
-			return originSrvURL, nil
-		},
 		forwardingConfig{
 			waitTimeout:       deployReplicasTimeout,
 			respHeaderTimeout: time.Second,
@@ -377,4 +372,29 @@ func splitHostPort(hostPortStr string) (string, int, error) {
 		return "", 0, errors.Wrap(err, "port was invalid")
 	}
 	return host, port, nil
+}
+
+type testRoutingTable struct {
+	memory map[string]*httpv1alpha1.HTTPScaledObject
+}
+
+func newTestRoutingTable() *testRoutingTable {
+	return &testRoutingTable{
+		memory: make(map[string]*httpv1alpha1.HTTPScaledObject),
+	}
+}
+
+var _ routing.Table = (*testRoutingTable)(nil)
+
+func (t testRoutingTable) Start(_ context.Context) error {
+	return nil
+}
+
+func (t testRoutingTable) Route(req *http.Request) *httpv1alpha1.HTTPScaledObject {
+	httpso, _ := t.memory[req.Host]
+	return httpso
+}
+
+func (t testRoutingTable) HasSynced() bool {
+	return true
 }

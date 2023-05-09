@@ -1,7 +1,7 @@
 package main
 
 import (
-	context "context"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"

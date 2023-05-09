@@ -1,7 +1,7 @@
 package main
 
 import (
-	context "context"
+	"context"
 	"fmt"
 	"net"
 	"testing"
@@ -12,20 +12,29 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
 
+	httpv1alpha1 "github.com/kedacore/http-add-on/operator/apis/http/v1alpha1"
 	"github.com/kedacore/http-add-on/pkg/queue"
 	"github.com/kedacore/http-add-on/pkg/routing"
 	externalscaler "github.com/kedacore/http-add-on/proto"
 )
 
-func standardTarget() routing.Target {
-	return routing.NewTarget(
-		"testns",
-		"testsrv",
-		8080,
-		"testdepl",
-		123,
-	)
+func standardTarget() *httpv1alpha1.HTTPScaledObject {
+	return &httpv1alpha1.HTTPScaledObject{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "testns",
+		},
+		Spec: httpv1alpha1.HTTPScaledObjectSpec{
+			ScaleTargetRef: &httpv1alpha1.ScaleTargetRef{
+				Deployment: "testdepl",
+				Service:    "testsrv",
+				Port:       8080,
+			},
+			TargetPendingRequests: pointer.Int32(123),
+		},
+	}
 }
 
 func TestStreamIsActive(t *testing.T) {
@@ -34,17 +43,16 @@ func TestStreamIsActive(t *testing.T) {
 		host        string
 		expected    bool
 		expectedErr bool
-		setup       func(*routing.Table, *queuePinger)
+		setup       func(routing.Table, *queuePinger)
 	}
-	r := require.New(t)
 	testCases := []testCase{
 		{
 			name:        "Simple host inactive",
 			host:        t.Name(),
 			expected:    false,
 			expectedErr: false,
-			setup: func(table *routing.Table, q *queuePinger) {
-				r.NoError(table.AddTarget(t.Name(), standardTarget()))
+			setup: func(table routing.Table, q *queuePinger) {
+				table.(*testRoutingTable).memory[t.Name()] = standardTarget()
 				q.pingMut.Lock()
 				defer q.pingMut.Unlock()
 				q.allCounts[t.Name()] = 0
@@ -55,15 +63,15 @@ func TestStreamIsActive(t *testing.T) {
 			host:        "interceptor",
 			expected:    true,
 			expectedErr: false,
-			setup:       func(*routing.Table, *queuePinger) {},
+			setup:       func(routing.Table, *queuePinger) {},
 		},
 		{
 			name:        "Simple host active",
 			host:        t.Name(),
 			expected:    true,
 			expectedErr: false,
-			setup: func(table *routing.Table, q *queuePinger) {
-				r.NoError(table.AddTarget(t.Name(), standardTarget()))
+			setup: func(table routing.Table, q *queuePinger) {
+				table.(*testRoutingTable).memory[t.Name()] = standardTarget()
 				q.pingMut.Lock()
 				defer q.pingMut.Unlock()
 				q.allCounts[t.Name()] = 1
@@ -74,8 +82,8 @@ func TestStreamIsActive(t *testing.T) {
 			host:        t.Name(),
 			expected:    false,
 			expectedErr: false,
-			setup: func(table *routing.Table, q *queuePinger) {
-				r.NoError(table.AddTarget(t.Name(), standardTarget()))
+			setup: func(table routing.Table, q *queuePinger) {
+				table.(*testRoutingTable).memory[t.Name()] = standardTarget()
 			},
 		},
 		{
@@ -83,7 +91,7 @@ func TestStreamIsActive(t *testing.T) {
 			host:        t.Name(),
 			expected:    false,
 			expectedErr: true,
-			setup:       func(*routing.Table, *queuePinger) {},
+			setup:       func(routing.Table, *queuePinger) {},
 		},
 	}
 
@@ -92,7 +100,7 @@ func TestStreamIsActive(t *testing.T) {
 			r := require.New(t)
 			ctx := context.Background()
 			lggr := logr.Discard()
-			table := routing.NewTable()
+			table := newTestRoutingTable()
 			ticker, pinger, err := newFakeQueuePinger(ctx, lggr)
 			r.NoError(err)
 			defer ticker.Stop()
@@ -166,17 +174,16 @@ func TestIsActive(t *testing.T) {
 		host        string
 		expected    bool
 		expectedErr bool
-		setup       func(*routing.Table, *queuePinger)
+		setup       func(routing.Table, *queuePinger)
 	}
-	r := require.New(t)
 	testCases := []testCase{
 		{
 			name:        "Simple host inactive",
 			host:        t.Name(),
 			expected:    false,
 			expectedErr: false,
-			setup: func(table *routing.Table, q *queuePinger) {
-				r.NoError(table.AddTarget(t.Name(), standardTarget()))
+			setup: func(table routing.Table, q *queuePinger) {
+				table.(*testRoutingTable).memory[t.Name()] = standardTarget()
 				q.pingMut.Lock()
 				defer q.pingMut.Unlock()
 				q.allCounts[t.Name()] = 0
@@ -187,15 +194,15 @@ func TestIsActive(t *testing.T) {
 			host:        "interceptor",
 			expected:    true,
 			expectedErr: false,
-			setup:       func(*routing.Table, *queuePinger) {},
+			setup:       func(routing.Table, *queuePinger) {},
 		},
 		{
 			name:        "Simple host active",
 			host:        t.Name(),
 			expected:    true,
 			expectedErr: false,
-			setup: func(table *routing.Table, q *queuePinger) {
-				r.NoError(table.AddTarget(t.Name(), standardTarget()))
+			setup: func(table routing.Table, q *queuePinger) {
+				table.(*testRoutingTable).memory[t.Name()] = standardTarget()
 				q.pingMut.Lock()
 				defer q.pingMut.Unlock()
 				q.allCounts[t.Name()] = 1
@@ -206,8 +213,8 @@ func TestIsActive(t *testing.T) {
 			host:        t.Name(),
 			expected:    false,
 			expectedErr: false,
-			setup: func(table *routing.Table, q *queuePinger) {
-				r.NoError(table.AddTarget(t.Name(), standardTarget()))
+			setup: func(table routing.Table, q *queuePinger) {
+				table.(*testRoutingTable).memory[t.Name()] = standardTarget()
 			},
 		},
 		{
@@ -215,7 +222,7 @@ func TestIsActive(t *testing.T) {
 			host:        t.Name(),
 			expected:    false,
 			expectedErr: true,
-			setup:       func(*routing.Table, *queuePinger) {},
+			setup:       func(routing.Table, *queuePinger) {},
 		},
 	}
 
@@ -224,7 +231,7 @@ func TestIsActive(t *testing.T) {
 			r := require.New(t)
 			ctx := context.Background()
 			lggr := logr.Discard()
-			table := routing.NewTable()
+			table := newTestRoutingTable()
 			ticker, pinger, err := newFakeQueuePinger(ctx, lggr)
 			r.NoError(err)
 			defer ticker.Stop()
@@ -264,10 +271,9 @@ func TestGetMetricSpecTable(t *testing.T) {
 		defaultTargetMetric            int64
 		defaultTargetMetricInterceptor int64
 		scalerMetadata                 map[string]string
-		newRoutingTableFn              func() *routing.Table
+		newRoutingTableFn              func() routing.Table
 		checker                        func(*testing.T, *externalscaler.GetMetricSpecResponse, error)
 	}
-	r := require.New(t)
 	cases := []testCase{
 		{
 			name:                           "valid host as host value in scaler metadata",
@@ -277,15 +283,21 @@ func TestGetMetricSpecTable(t *testing.T) {
 				"host":                  "validHost",
 				"targetPendingRequests": "123",
 			},
-			newRoutingTableFn: func() *routing.Table {
-				ret := routing.NewTable()
-				r.NoError(ret.AddTarget("validHost", routing.NewTarget(
-					ns,
-					"testsrv",
-					8080,
-					"testdepl",
-					123,
-				)))
+			newRoutingTableFn: func() routing.Table {
+				ret := newTestRoutingTable()
+				ret.memory["validHost"] = &httpv1alpha1.HTTPScaledObject{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: ns,
+					},
+					Spec: httpv1alpha1.HTTPScaledObjectSpec{
+						ScaleTargetRef: &httpv1alpha1.ScaleTargetRef{
+							Deployment: "testdepl",
+							Service:    "testsrv",
+							Port:       8080,
+						},
+						TargetPendingRequests: pointer.Int32(123),
+					},
+				}
 				return ret
 			},
 			checker: func(t *testing.T, res *externalscaler.GetMetricSpecResponse, err error) {
@@ -307,15 +319,21 @@ func TestGetMetricSpecTable(t *testing.T) {
 				"host":                  "interceptor",
 				"targetPendingRequests": "123",
 			},
-			newRoutingTableFn: func() *routing.Table {
-				ret := routing.NewTable()
-				r.NoError(ret.AddTarget("validHost", routing.NewTarget(
-					ns,
-					"testsrv",
-					8080,
-					"testdepl",
-					123,
-				)))
+			newRoutingTableFn: func() routing.Table {
+				ret := newTestRoutingTable()
+				ret.memory["validHost"] = &httpv1alpha1.HTTPScaledObject{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: ns,
+					},
+					Spec: httpv1alpha1.HTTPScaledObjectSpec{
+						ScaleTargetRef: &httpv1alpha1.ScaleTargetRef{
+							Deployment: "testdepl",
+							Service:    "testsrv",
+							Port:       8080,
+						},
+						TargetPendingRequests: pointer.Int32(123),
+					},
+				}
 				return ret
 			},
 			checker: func(t *testing.T, res *externalscaler.GetMetricSpecResponse, err error) {
@@ -372,7 +390,7 @@ func TestGetMetrics(t *testing.T) {
 		setupFn        func(
 			context.Context,
 			logr.Logger,
-		) (*routing.Table, *queuePinger, func(), error)
+		) (routing.Table, *queuePinger, func(), error)
 		checkFn                        func(*testing.T, *externalscaler.GetMetricsResponse, error)
 		defaultTargetMetric            int64
 		defaultTargetMetricInterceptor int64
@@ -430,8 +448,8 @@ func TestGetMetrics(t *testing.T) {
 			setupFn: func(
 				ctx context.Context,
 				lggr logr.Logger,
-			) (*routing.Table, *queuePinger, func(), error) {
-				table := routing.NewTable()
+			) (routing.Table, *queuePinger, func(), error) {
+				table := newTestRoutingTable()
 				ticker, pinger, err := newFakeQueuePinger(ctx, lggr)
 				if err != nil {
 					return nil, nil, nil, err
@@ -459,8 +477,8 @@ func TestGetMetrics(t *testing.T) {
 			setupFn: func(
 				ctx context.Context,
 				lggr logr.Logger,
-			) (*routing.Table, *queuePinger, func(), error) {
-				table := routing.NewTable()
+			) (routing.Table, *queuePinger, func(), error) {
+				table := newTestRoutingTable()
 				// create queue and ticker without the host in it
 				ticker, pinger, err := newFakeQueuePinger(ctx, lggr)
 				if err != nil {
@@ -486,8 +504,8 @@ func TestGetMetrics(t *testing.T) {
 			setupFn: func(
 				ctx context.Context,
 				lggr logr.Logger,
-			) (*routing.Table, *queuePinger, func(), error) {
-				table := routing.NewTable()
+			) (routing.Table, *queuePinger, func(), error) {
+				table := newTestRoutingTable()
 				pinger, done, err := startFakeInterceptorServer(ctx, lggr, map[string]int{
 					"validHost": 201,
 				}, 2*time.Millisecond)
@@ -518,8 +536,8 @@ func TestGetMetrics(t *testing.T) {
 			setupFn: func(
 				ctx context.Context,
 				lggr logr.Logger,
-			) (*routing.Table, *queuePinger, func(), error) {
-				table := routing.NewTable()
+			) (routing.Table, *queuePinger, func(), error) {
+				table := newTestRoutingTable()
 				pinger, done, err := startFakeInterceptorServer(ctx, lggr, map[string]int{
 					"host1": 201,
 					"host2": 202,
@@ -553,13 +571,9 @@ func TestGetMetrics(t *testing.T) {
 			setupFn: func(
 				ctx context.Context,
 				lggr logr.Logger,
-			) (*routing.Table, *queuePinger, func(), error) {
-				table := routing.NewTable()
-				r := require.New(t)
-				r.NoError(table.AddTarget(
-					"myhost.com",
-					standardTarget(),
-				))
+			) (routing.Table, *queuePinger, func(), error) {
+				table := newTestRoutingTable()
+				table.memory["myhost.com"] = standardTarget()
 				pinger, done, err := startFakeInterceptorServer(ctx, lggr, map[string]int{
 					"host1": 201,
 					"host2": 202,

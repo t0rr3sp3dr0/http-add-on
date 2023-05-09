@@ -1,16 +1,19 @@
 package main
 
 import (
+	"context"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	httpv1alpha1 "github.com/kedacore/http-add-on/operator/apis/http/v1alpha1"
 	"github.com/kedacore/http-add-on/pkg/routing"
 )
 
 type testCase struct {
 	name      string
-	table     routing.TableReader
+	table     routing.Table
 	counts    map[string]int
 	retCounts map[string]int
 }
@@ -22,11 +25,11 @@ func cases(r *require.Assertions) []testCase {
 			table: newRoutingTable(r, []hostAndTarget{
 				{
 					host:   "www.example.com",
-					target: routing.Target{},
+					target: &httpv1alpha1.HTTPScaledObject{},
 				},
 				{
 					host:   "www.example2.com",
-					target: routing.Target{},
+					target: &httpv1alpha1.HTTPScaledObject{},
 				},
 			}),
 			counts: make(map[string]int),
@@ -40,7 +43,7 @@ func cases(r *require.Assertions) []testCase {
 			table: newRoutingTable(r, []hostAndTarget{
 				{
 					host:   "example.com",
-					target: routing.Target{},
+					target: &httpv1alpha1.HTTPScaledObject{},
 				},
 			}),
 			counts: map[string]int{
@@ -55,11 +58,11 @@ func cases(r *require.Assertions) []testCase {
 			table: newRoutingTable(r, []hostAndTarget{
 				{
 					host:   "example.com",
-					target: routing.Target{},
+					target: &httpv1alpha1.HTTPScaledObject{},
 				},
 				{
 					host:   "example2.com",
-					target: routing.Target{},
+					target: &httpv1alpha1.HTTPScaledObject{},
 				},
 			}),
 			counts: map[string]int{
@@ -81,7 +84,6 @@ func TestGetHostCount(t *testing.T) {
 				ret, exists := getHostCount(
 					host,
 					tc.counts,
-					tc.table,
 				)
 				r.True(exists)
 				r.Equal(retCount, ret)
@@ -92,13 +94,38 @@ func TestGetHostCount(t *testing.T) {
 
 type hostAndTarget struct {
 	host   string
-	target routing.Target
+	target *httpv1alpha1.HTTPScaledObject
 }
 
-func newRoutingTable(r *require.Assertions, entries []hostAndTarget) *routing.Table {
-	ret := routing.NewTable()
+func newRoutingTable(r *require.Assertions, entries []hostAndTarget) routing.Table {
+	ret := newTestRoutingTable()
 	for _, entry := range entries {
-		r.NoError(ret.AddTarget(entry.host, entry.target))
+		ret.memory[entry.host] = entry.target
 	}
 	return ret
+}
+
+type testRoutingTable struct {
+	memory map[string]*httpv1alpha1.HTTPScaledObject
+}
+
+func newTestRoutingTable() *testRoutingTable {
+	return &testRoutingTable{
+		memory: make(map[string]*httpv1alpha1.HTTPScaledObject),
+	}
+}
+
+var _ routing.Table = (*testRoutingTable)(nil)
+
+func (t testRoutingTable) Start(_ context.Context) error {
+	return nil
+}
+
+func (t testRoutingTable) Route(req *http.Request) *httpv1alpha1.HTTPScaledObject {
+	httpso, _ := t.memory[req.Host]
+	return httpso
+}
+
+func (t testRoutingTable) HasSynced() bool {
+	return true
 }

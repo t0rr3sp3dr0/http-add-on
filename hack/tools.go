@@ -22,5 +22,6 @@ limitations under the License.
 package hack
 
 import (
+	_ "github.com/golang/mock"
 	_ "k8s.io/code-generator"
 )

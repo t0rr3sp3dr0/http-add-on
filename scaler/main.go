@@ -18,18 +18,23 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
+	clientset "github.com/kedacore/http-add-on/operator/generated/clientset/versioned"
+	informers "github.com/kedacore/http-add-on/operator/generated/informers/externalversions"
+	informershttpv1alpha1 "github.com/kedacore/http-add-on/operator/generated/informers/externalversions/http/v1alpha1"
 	"github.com/kedacore/http-add-on/pkg/build"
 	kedahttp "github.com/kedacore/http-add-on/pkg/http"
 	"github.com/kedacore/http-add-on/pkg/k8s"
 	pkglog "github.com/kedacore/http-add-on/pkg/log"
-	"github.com/kedacore/http-add-on/pkg/routing"
 	externalscaler "github.com/kedacore/http-add-on/proto"
 )
 
 // +kubebuilder:rbac:groups="",namespace=keda,resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=endpoints,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
+// +kubebuilder:rbac:groups=http.keda.sh,resources=httpscaledobjects,verbs=get;list;watch
 
 func main() {
 	lggr, err := pkglog.NewZapr()
@@ -50,9 +55,15 @@ func main() {
 	targetPendingRequests := cfg.TargetPendingRequests
 	targetPendingRequestsInterceptor := cfg.TargetPendingRequestsInterceptor
 
-	k8sCl, _, err := k8s.NewClientset()
+	k8sCfg, err := rest.InClusterConfig()
 	if err != nil {
-		lggr.Error(err, "getting a Kubernetes client")
+		lggr.Error(err, "Kubernetes client config not found")
+		done()
+		os.Exit(1)
+	}
+	k8sCl, err := kubernetes.NewForConfig(k8sCfg)
+	if err != nil {
+		lggr.Error(err, "creating new Kubernetes ClientSet")
 		done()
 		os.Exit(1)
 	}
@@ -72,27 +83,6 @@ func main() {
 	}
 	defer done()
 
-	// This callback function is used to fetch and save
-	// the current queue counts from the interceptor immediately
-	// after updating the routingTable information.
-	callbackWhenRoutingTableUpdate := func() error {
-		if err := pinger.fetchAndSaveCounts(ctx); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	table := routing.NewTable()
-
-	// Create the informer of ConfigMap resource,
-	// the resynchronization period of the informer should be not less than 1s,
-	// refer to: https://github.com/kubernetes/client-go/blob/v0.22.2/tools/cache/shared_informer.go#L475
-	configMapInformer := k8s.NewInformerConfigMapUpdater(
-		lggr,
-		k8sCl,
-		cfg.ConfigMapCacheRsyncPeriod,
-		cfg.TargetNamespace,
-	)
 	// create the deployment informer
 	deployInformer := k8s.NewInformerBackedDeploymentCache(
 		lggr,
@@ -100,12 +90,27 @@ func main() {
 		cfg.DeploymentCacheRsyncPeriod,
 	)
 
+	httpCl, err := clientset.NewForConfig(k8sCfg)
+	if err != nil {
+		lggr.Error(err, "creating new HTTP ClientSet")
+		os.Exit(1)
+	}
+	sharedInformerFactory := informers.NewSharedInformerFactory(httpCl, cfg.ConfigMapCacheRsyncPeriod)
+	httpsoInformer := informershttpv1alpha1.New(sharedInformerFactory, "", nil).HTTPScaledObjects()
+
 	grp, ctx := errgroup.WithContext(ctx)
 
 	// start the deployment informer
 	grp.Go(func() error {
 		defer done()
 		return deployInformer.Start(ctx)
+	})
+
+	// start the httpso informer
+	grp.Go(func() error {
+		defer done()
+		httpsoInformer.Informer().Run(ctx.Done())
+		return ctx.Err()
 	})
 
 	grp.Go(func() error {
@@ -124,21 +129,9 @@ func main() {
 			lggr,
 			grpcPort,
 			pinger,
-			table,
+			httpsoInformer,
 			int64(targetPendingRequests),
 			int64(targetPendingRequestsInterceptor),
-		)
-	})
-
-	grp.Go(func() error {
-		defer done()
-		return routing.StartConfigMapRoutingTableUpdater(
-			ctx,
-			lggr,
-			configMapInformer,
-			cfg.TargetNamespace,
-			table,
-			callbackWhenRoutingTableUpdate,
 		)
 	})
 
@@ -161,7 +154,7 @@ func startGrpcServer(
 	lggr logr.Logger,
 	port int,
 	pinger *queuePinger,
-	routingTable *routing.Table,
+	httpsoInformer informershttpv1alpha1.HTTPScaledObjectInformer,
 	targetPendingRequests int64,
 	targetPendingRequestsInterceptor int64,
 ) error {
@@ -178,7 +171,7 @@ func startGrpcServer(
 		newImpl(
 			lggr,
 			pinger,
-			routingTable,
+			httpsoInformer,
 			targetPendingRequests,
 			targetPendingRequestsInterceptor,
 		),
