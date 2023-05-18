@@ -4,7 +4,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -253,4 +255,13 @@ func fetchCounts(
 	}
 
 	return totalCounts, agg, nil
+}
+
+func identifierFromHostAndPathPrefix(host string, pathPrefix string) string {
+	var path string
+	if pathPrefix != "" {
+		path = "/" + strings.TrimLeft(pathPrefix, "/")
+	}
+
+	return fmt.Sprintf("%s%s", host, path)
 }

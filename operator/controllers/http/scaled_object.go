@@ -40,6 +40,7 @@ func createOrUpdateScaledObject(
 		httpso.Spec.ScaleTargetRef.Deployment,
 		externalScalerHostName,
 		httpso.Spec.Host,
+		httpso.Spec.PathPrefix,
 		minReplicaCount,
 		maxReplicaCount,
 		httpso.Spec.CooldownPeriod,

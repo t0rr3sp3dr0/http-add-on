@@ -23,12 +23,54 @@ var _ = Describe("TableMemory", func() {
 				Host: "keda.sh",
 			},
 		}
+
 		httpso1 = httpv1alpha1.HTTPScaledObject{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "one-one-one-one",
 			},
 			Spec: httpv1alpha1.HTTPScaledObjectSpec{
 				Host: "1.1.1.1",
+			},
+		}
+
+		httpsoList = httpv1alpha1.HTTPScaledObjectList{
+			Items: []httpv1alpha1.HTTPScaledObject{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "/",
+					},
+					Spec: httpv1alpha1.HTTPScaledObjectSpec{
+						Host:       "localhost",
+						PathPrefix: "/",
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "/f",
+					},
+					Spec: httpv1alpha1.HTTPScaledObjectSpec{
+						Host:       "localhost",
+						PathPrefix: "/f",
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "fo",
+					},
+					Spec: httpv1alpha1.HTTPScaledObjectSpec{
+						Host:       "localhost",
+						PathPrefix: "fo",
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "foo/",
+					},
+					Spec: httpv1alpha1.HTTPScaledObjectSpec{
+						Host:       "localhost",
+						PathPrefix: "foo/",
+					},
+				},
 			},
 		}
 	)
@@ -196,6 +238,21 @@ var _ = Describe("TableMemory", func() {
 	})
 
 	Context("Route", func() {
+		It("returns nil when no matching host for URL", func() {
+			tm := tableMemory{
+				tree: iradix.New[*httpv1alpha1.HTTPScaledObject](),
+			}
+
+			key := tm.treeKeyForHTTPSO(&httpso0)
+			tm.tree, _, _ = tm.tree.Insert(key, &httpso0)
+
+			url, err := url.Parse(fmt.Sprintf("https://%s.br", httpso0.Spec.Host))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(url).NotTo(BeNil())
+			httpso := tm.Route(url)
+			Expect(httpso).To(BeNil())
+		})
+
 		It("returns expected object with matching host for URL", func() {
 			tm := tableMemory{
 				tree: iradix.New[*httpv1alpha1.HTTPScaledObject](),
@@ -221,19 +278,50 @@ var _ = Describe("TableMemory", func() {
 			Expect(ret1).To(Equal(&httpso1))
 		})
 
-		It("returns nil when no matching host for URL", func() {
+		It("returns nil when no matching pathPrefix for URL", func() {
 			tm := tableMemory{
 				tree: iradix.New[*httpv1alpha1.HTTPScaledObject](),
 			}
 
-			key0 := tm.treeKeyForHTTPSO(&httpso0)
-			tm.tree, _, _ = tm.tree.Insert(key0, &httpso0)
+			httpsoFoo := httpsoList.Items[3]
+			key := tm.treeKeyForHTTPSO(&httpsoFoo)
+			tm.tree, _, _ = tm.tree.Insert(key, &httpsoFoo)
 
-			url, err := url.Parse("https://azmk8s.io")
+			//goland:noinspection HttpUrlsUsage
+			url, err := url.Parse(fmt.Sprintf("http://%s/bar%s", httpsoFoo.Spec.Host, httpsoFoo.Spec.PathPrefix))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(url).NotTo(BeNil())
 			httpso := tm.Route(url)
 			Expect(httpso).To(BeNil())
+		})
+
+		It("returns expected object with matching pathPrefix for URL", func() {
+			tm := tableMemory{
+				tree: iradix.New[*httpv1alpha1.HTTPScaledObject](),
+			}
+
+			for _, httpso := range httpsoList.Items {
+				httpso := httpso
+
+				key := tm.treeKeyForHTTPSO(&httpso)
+				tm.tree, _, _ = tm.tree.Insert(key, &httpso)
+			}
+
+			for _, httpso := range httpsoList.Items {
+				url, err := url.Parse(fmt.Sprintf("https://%s/%s", httpso.Spec.Host, httpso.Spec.PathPrefix))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(url).NotTo(BeNil())
+				ret := tm.Route(url)
+				Expect(ret).To(Equal(&httpso))
+			}
+
+			for _, httpso := range httpsoList.Items {
+				url, err := url.Parse(fmt.Sprintf("https://%s/%s/bar", httpso.Spec.Host, httpso.Spec.PathPrefix))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(url).NotTo(BeNil())
+				ret := tm.Route(url)
+				Expect(ret).To(Equal(&httpso))
+			}
 		})
 	})
 
@@ -242,6 +330,7 @@ var _ = Describe("TableMemory", func() {
 			const (
 				host = "kubernetes.io"
 				path = "abc/def"
+				norm = "//kubernetes.io/abc/def/"
 			)
 
 			var tm tableMemory
@@ -251,7 +340,7 @@ var _ = Describe("TableMemory", func() {
 			Expect(url).NotTo(BeNil())
 
 			key := tm.treeKeyForURL(url)
-			Expect(key).To(Equal([]byte(fmt.Sprintf("//%s/%s", host, path))))
+			Expect(key).To(Equal([]byte(norm)))
 		})
 
 		It("returns nil for nil URL", func() {
@@ -264,10 +353,21 @@ var _ = Describe("TableMemory", func() {
 
 	Context("treeKeyForHTTPSO", func() {
 		It("returns expected key for HTTPSO", func() {
+			const (
+				host = "kubernetes.io"
+				path = "abc/def"
+				norm = "//kubernetes.io/abc/def/"
+			)
+
 			var tm tableMemory
 
-			key := tm.treeKeyForHTTPSO(&httpso0)
-			Expect(key).To(Equal([]byte(fmt.Sprintf("//%s", httpso0.Spec.Host))))
+			key := tm.treeKeyForHTTPSO(&httpv1alpha1.HTTPScaledObject{
+				Spec: httpv1alpha1.HTTPScaledObjectSpec{
+					Host:       host,
+					PathPrefix: path,
+				},
+			})
+			Expect(key).To(Equal([]byte(norm)))
 		})
 
 		It("returns nil for nil HTTPSO", func() {
@@ -283,57 +383,109 @@ var _ = Describe("TableMemory", func() {
 			host0 = "kubernetes.io"
 			host1 = "kubernetes.io:443"
 			path0 = "abc/def"
-			path1 = "/abc/def"
-			path2 = "//abc/def"
+			path1 = "abc/def/"
+			path2 = "abc/def//"
+			path3 = "/abc/def"
+			path4 = "/abc/def/"
+			path5 = "/abc/def//"
+			path6 = "//abc/def"
+			path7 = "//abc/def/"
+			path8 = "//abc/def//"
+			norm0 = "///"
+			norm1 = "//kubernetes.io/"
+			norm2 = "///abc/def/"
+			norm3 = "//kubernetes.io/abc/def/"
 		)
 
 		It("returns expected key for blank host and blank path", func() {
 			var tm tableMemory
 
 			key := tm.treeKey("", "")
-			Expect(key).To(Equal([]byte("//")))
+			Expect(key).To(Equal([]byte(norm0)))
 		})
 
 		It("returns expected key for host without port", func() {
 			var tm tableMemory
 
 			key := tm.treeKey(host0, "")
-			Expect(key).To(Equal([]byte(fmt.Sprintf("//%s", host0))))
+			Expect(key).To(Equal([]byte(norm1)))
 		})
 
 		It("returns expected key for host with port", func() {
 			var tm tableMemory
 
 			key := tm.treeKey(host1, "")
-			Expect(key).To(Equal([]byte(fmt.Sprintf("//%s", host0))))
+			Expect(key).To(Equal([]byte(norm1)))
 		})
 
-		It("returns expected key for path without leading slash", func() {
+		It("returns expected key for path with no leading slashes and no trailing slashes", func() {
 			var tm tableMemory
 
 			key := tm.treeKey("", path0)
-			Expect(key).To(Equal([]byte(fmt.Sprintf("///%s", path0))))
+			Expect(key).To(Equal([]byte(norm2)))
 		})
 
-		It("returns expected key for path with leading slash", func() {
+		It("returns expected key for path with no leading slashes and single trailing slash", func() {
 			var tm tableMemory
 
 			key := tm.treeKey("", path1)
-			Expect(key).To(Equal([]byte(fmt.Sprintf("///%s", path0))))
+			Expect(key).To(Equal([]byte(norm2)))
 		})
 
-		It("returns expected key for path with multiple leading slashes", func() {
+		It("returns expected key for path with no leading slashes and multiple trailing slashes", func() {
 			var tm tableMemory
 
 			key := tm.treeKey("", path2)
-			Expect(key).To(Equal([]byte(fmt.Sprintf("///%s", path0))))
+			Expect(key).To(Equal([]byte(norm2)))
+		})
+
+		It("returns expected key for path with single leading slashes and no trailing slashes", func() {
+			var tm tableMemory
+
+			key := tm.treeKey("", path3)
+			Expect(key).To(Equal([]byte(norm2)))
+		})
+
+		It("returns expected key for path with single leading slash and single trailing slash", func() {
+			var tm tableMemory
+
+			key := tm.treeKey("", path4)
+			Expect(key).To(Equal([]byte(norm2)))
+		})
+
+		It("returns expected key for path with single leading slash and multiple trailing slashes", func() {
+			var tm tableMemory
+
+			key := tm.treeKey("", path5)
+			Expect(key).To(Equal([]byte(norm2)))
+		})
+
+		It("returns expected key for path with multiple leading slashes and no trailing slashes", func() {
+			var tm tableMemory
+
+			key := tm.treeKey("", path6)
+			Expect(key).To(Equal([]byte(norm2)))
+		})
+
+		It("returns expected key for path with multiple leading slash and single trailing slash", func() {
+			var tm tableMemory
+
+			key := tm.treeKey("", path7)
+			Expect(key).To(Equal([]byte(norm2)))
+		})
+
+		It("returns expected key for path with multiple leading slash and multiple trailing slashes", func() {
+			var tm tableMemory
+
+			key := tm.treeKey("", path8)
+			Expect(key).To(Equal([]byte(norm2)))
 		})
 
 		It("returns expected key for non-blank host and non-blank path", func() {
 			var tm tableMemory
 
-			key := tm.treeKey(host1, path2)
-			Expect(key).To(Equal([]byte(fmt.Sprintf("//%s/%s", host0, path0))))
+			key := tm.treeKey(host1, path8)
+			Expect(key).To(Equal([]byte(norm3)))
 		})
 
 		It("returns nil for nil HTTPSO", func() {

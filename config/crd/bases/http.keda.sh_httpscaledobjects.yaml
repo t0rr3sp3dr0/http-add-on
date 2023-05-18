@@ -61,8 +61,14 @@ spec:
             properties:
               host:
                 description: The host to route. All requests with this host in the
-                  "Host" header will be routed to the Service and Port specified in
-                  the scaleTargetRef
+                  "Host" header that also match the pathPrefix path will be routed
+                  to the Service and Port specified in the scaleTargetRef.
+                type: string
+              pathPrefix:
+                description: The path to route. All requests with this path prefix
+                  will that also match the host field, will be routed to the Service
+                  and Port specified in the scaleTargetRef. When this field is blank,
+                  any request is matched.
                 type: string
               replicas:
                 description: (optional) Replica information

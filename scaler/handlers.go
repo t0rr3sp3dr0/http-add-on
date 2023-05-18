@@ -60,6 +60,7 @@ func (e *impl) IsActive(
 	scaledObject *externalscaler.ScaledObjectRef,
 ) (*externalscaler.IsActiveResponse, error) {
 	lggr := e.lggr.WithName("IsActive")
+
 	host, ok := scaledObject.ScalerMetadata["host"]
 	if !ok {
 		err := fmt.Errorf("no 'host' field found in ScaledObject metadata")
@@ -67,16 +68,25 @@ func (e *impl) IsActive(
 		return nil, err
 	}
 	if host == interceptor {
-		return &externalscaler.IsActiveResponse{
+		res := externalscaler.IsActiveResponse{
 			Result: true,
-		}, nil
+		}
+		return &res, nil
 	}
 
-	hostCount := e.pinger.counts()[host]
-	active := hostCount > 0
-	return &externalscaler.IsActiveResponse{
+	pathPrefix, ok := scaledObject.ScalerMetadata["pathPrefix"]
+	if !ok {
+		lggr.Info("pathPrefix not found on ScalerMetadata, using zero value for backwards compatibility")
+	}
+
+	key := identifierFromHostAndPathPrefix(host, pathPrefix)
+	count := e.pinger.counts()[key]
+
+	active := count > 0
+	res := &externalscaler.IsActiveResponse{
 		Result: active,
-	}, nil
+	}
+	return res, nil
 }
 
 func (e *impl) StreamIsActive(
@@ -120,12 +130,21 @@ func (e *impl) GetMetricSpec(
 	sor *externalscaler.ScaledObjectRef,
 ) (*externalscaler.GetMetricSpecResponse, error) {
 	lggr := e.lggr.WithName("GetMetricSpec")
+
 	host, ok := sor.ScalerMetadata["host"]
 	if !ok {
 		err := fmt.Errorf("'host' not found in ScaledObject metadata")
 		lggr.Error(err, "no 'host' found in ScaledObject metadata")
 		return nil, err
 	}
+
+	pathPrefix, ok := sor.ScalerMetadata["pathPrefix"]
+	if !ok {
+		lggr.Info("pathPrefix not found on ScalerMetadata, using zero value for backwards compatibility")
+	}
+
+	metricName := identifierFromHostAndPathPrefix(host, pathPrefix)
+
 	targetPendingRequests := e.targetMetricInterceptor
 	if host != interceptor {
 		httpso, err := e.httpsoInformer.Lister().HTTPScaledObjects(sor.Namespace).Get(sor.Name)
@@ -136,16 +155,16 @@ func (e *impl) GetMetricSpec(
 
 		targetPendingRequests = int64(pointer.Int32Deref(httpso.Spec.TargetPendingRequests, 100))
 	}
-	metricSpecs := []*externalscaler.MetricSpec{
-		{
-			MetricName: host,
-			TargetSize: targetPendingRequests,
+
+	res := &externalscaler.GetMetricSpecResponse{
+		MetricSpecs: []*externalscaler.MetricSpec{
+			{
+				MetricName: metricName,
+				TargetSize: targetPendingRequests,
+			},
 		},
 	}
-
-	return &externalscaler.GetMetricSpecResponse{
-		MetricSpecs: metricSpecs,
-	}, nil
+	return res, nil
 }
 
 func (e *impl) GetMetrics(
@@ -153,6 +172,7 @@ func (e *impl) GetMetrics(
 	metricRequest *externalscaler.GetMetricsRequest,
 ) (*externalscaler.GetMetricsResponse, error) {
 	lggr := e.lggr.WithName("GetMetrics")
+
 	host, ok := metricRequest.ScaledObjectRef.ScalerMetadata["host"]
 	if !ok {
 		err := fmt.Errorf("no 'host' field found in ScaledObject metadata")
@@ -160,17 +180,25 @@ func (e *impl) GetMetrics(
 		return nil, err
 	}
 
-	hostCount, ok := e.pinger.counts()[host]
+	pathPrefix, ok := metricRequest.ScaledObjectRef.ScalerMetadata["pathPrefix"]
+	if !ok {
+		lggr.Info("pathPrefix not found on ScalerMetadata, using zero value for backwards compatibility")
+	}
+
+	id := identifierFromHostAndPathPrefix(host, pathPrefix)
+
+	hostCount, ok := e.pinger.counts()[id]
 	if !ok && host == interceptor {
 		hostCount = e.pinger.aggregate()
 	}
-	metricValues := []*externalscaler.MetricValue{
-		{
-			MetricName:  host,
-			MetricValue: int64(hostCount),
+
+	res := &externalscaler.GetMetricsResponse{
+		MetricValues: []*externalscaler.MetricValue{
+			{
+				MetricName:  id,
+				MetricValue: int64(hostCount),
+			},
 		},
 	}
-	return &externalscaler.GetMetricsResponse{
-		MetricValues: metricValues,
-	}, nil
+	return res, nil
 }

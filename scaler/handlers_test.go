@@ -360,7 +360,7 @@ func TestGetMetricSpecTable(t *testing.T) {
 				testCase.defaultTargetMetricInterceptor,
 			)
 			scaledObjectRef := externalscaler.ScaledObjectRef{
-				Name:           testCase.scalerMetadata["host"],
+				Name:           identifierFromHostAndPathPrefix(testCase.scalerMetadata["host"], testCase.scalerMetadata["pathPrefix"]),
 				ScalerMetadata: testCase.scalerMetadata,
 			}
 			ret, err := hdl.GetMetricSpec(ctx, &scaledObjectRef)

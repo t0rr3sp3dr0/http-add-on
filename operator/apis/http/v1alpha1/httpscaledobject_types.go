@@ -40,9 +40,14 @@ type ReplicaStruct struct {
 
 // HTTPScaledObjectSpec defines the desired state of HTTPScaledObject
 type HTTPScaledObjectSpec struct {
-	// The host to route. All requests with this host in the "Host" header will
-	// be routed to the Service and Port specified in the scaleTargetRef
+	// The host to route. All requests with this host in the "Host" header that
+	// also match the pathPrefix path will be routed to the Service and Port
+	// specified in the scaleTargetRef.
 	Host string `json:"host"`
+	// The path to route. All requests with this path prefix will that also
+	// match the host field, will be routed to the Service and Port specified
+	// in the scaleTargetRef. When this field is blank, any request is matched.
+	PathPrefix string `json:"pathPrefix,omitempty"`
 	// The name of the deployment to route HTTP requests to (and to autoscale).
 	// Either this or Image must be set
 	ScaleTargetRef *ScaleTargetRef `json:"scaleTargetRef"`
