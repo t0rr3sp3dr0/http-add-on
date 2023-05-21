@@ -8,6 +8,7 @@ import (
 	"github.com/go-logr/logr"
 
 	"github.com/kedacore/http-add-on/pkg/queue"
+	"github.com/kedacore/http-add-on/pkg/routing"
 )
 
 func getHost(r *http.Request) (string, error) {
@@ -28,23 +29,26 @@ func getHost(r *http.Request) (string, error) {
 func countMiddleware(
 	lggr logr.Logger,
 	q queue.Counter,
+	routingTable routing.Table,
 	next http.Handler,
 ) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host, err := getHost(r)
-		if err != nil {
-			lggr.Error(err, "not forwarding request")
+		httpso := routingTable.Route(r)
+		if httpso == nil {
+			lggr.Error(nil, "Could not find Route, not forwarding request")
 			w.WriteHeader(400)
 			if _, err := w.Write([]byte("Host not found, not forwarding request")); err != nil {
 				lggr.Error(err, "could not write error message to client")
 			}
 			return
 		}
-		if err := q.Resize(host, +1); err != nil {
+		
+		id := httpso.Spec.Host + httpso.Spec.PathPrefix
+		if err := q.Resize(id, +1); err != nil {
 			log.Printf("Error incrementing queue for %q (%s)", r.RequestURI, err)
 		}
 		defer func() {
-			if err := q.Resize(host, -1); err != nil {
+			if err := q.Resize(id, -1); err != nil {
 				log.Printf("Error decrementing queue for %q (%s)", r.RequestURI, err)
 			}
 		}()

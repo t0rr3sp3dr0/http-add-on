@@ -265,3 +265,14 @@ func identifierFromHostAndPathPrefix(host string, pathPrefix string) string {
 
 	return fmt.Sprintf("%s%s", host, path)
 }
+
+func metricNameFromHostAndPathPrefix(host string, pathPrefix string) string {
+	var path string
+	replacer := strings.NewReplacer("/", "_")
+	if pathPrefix != "" {
+		path = "/" + strings.TrimLeft(pathPrefix, "/")
+	}
+	sanitizedPath := replacer.Replace(path)
+
+	return fmt.Sprintf("%s%s", host, sanitizedPath)
+}

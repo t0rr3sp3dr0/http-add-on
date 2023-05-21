@@ -143,7 +143,7 @@ func (e *impl) GetMetricSpec(
 		lggr.Info("pathPrefix not found on ScalerMetadata, using zero value for backwards compatibility")
 	}
 
-	metricName := identifierFromHostAndPathPrefix(host, pathPrefix)
+	metricName := metricNameFromHostAndPathPrefix(host, pathPrefix)
 
 	targetPendingRequests := e.targetMetricInterceptor
 	if host != interceptor {
@@ -185,6 +185,7 @@ func (e *impl) GetMetrics(
 		lggr.Info("pathPrefix not found on ScalerMetadata, using zero value for backwards compatibility")
 	}
 
+	metricNmae := metricNameFromHostAndPathPrefix(host, pathPrefix)
 	id := identifierFromHostAndPathPrefix(host, pathPrefix)
 
 	hostCount, ok := e.pinger.counts()[id]
@@ -195,7 +196,7 @@ func (e *impl) GetMetrics(
 	res := &externalscaler.GetMetricsResponse{
 		MetricValues: []*externalscaler.MetricValue{
 			{
-				MetricName:  id,
+				MetricName:  metricNmae,
 				MetricValue: int64(hostCount),
 			},
 		},
